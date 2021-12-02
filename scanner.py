@@ -3,7 +3,7 @@ import socket
 import struct
 import time
 import multiprocessing
-from multiprocessing import Pool
+from multiprocessing.dummy import Pool
 from random import randint
 
 from scapy.config import conf
@@ -78,12 +78,16 @@ def scan_tcp(args):
 
 
 def scan_ports(ip, ports, is_verbose, is_guess, timeout):
-    pool_tcp = Pool(256)
+    pool_tcp = Pool(100)
     udp_ports = []
-    pool_udp = Pool(256)
+    pool_udp = Pool(100)
     tcp_ports = []
     handle_udp(ip, is_guess, pool_udp, ports, timeout, udp_ports)
+    pool_udp.close()
+    pool_udp.terminate()
     handle_tcp(ip, is_guess, is_verbose, pool_tcp, ports, tcp_ports, timeout)
+    pool_tcp.close()
+    pool_udp.terminate()
 
 
 def handle_tcp(ip, is_guess, is_verbose, pool_tcp, ports, tcp_ports, timeout):
@@ -126,8 +130,6 @@ def parse_args(args):
 def scan_udp(args):
     ip, port, is_guess, timeout = args
     proto = ''
-    if port == '':
-        return
     sock = socket.socket(
         socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
@@ -164,7 +166,6 @@ def check_pack(pack, pack_id, was_send):
 def main():
     args = get_input_parameters()
     ports, ip, timeout, is_verbose, is_guess = parse_args(args)
-
     scan_ports(ip, ports, is_verbose, is_guess, timeout)
 
 
