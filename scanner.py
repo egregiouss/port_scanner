@@ -2,7 +2,8 @@ import argparse
 import socket
 import struct
 import time
-from multiprocessing.dummy import Pool
+import multiprocessing
+from multiprocessing import Pool
 from random import randint
 
 from scapy.config import conf
@@ -44,20 +45,23 @@ def scan_tcp(args):
     port, ip, is_verbose, is_guess, timeout = args
     start_time = time.perf_counter()
     conf.L3socket = L3RawSocket
+    if port == '':
+        return
     port = int(port)
     src_port = RandShort()  # Randomize source port numbers
     packet = IP(dst=ip) / TCP(sport=src_port, dport=port, flags='S')
 
     resp = sr1(packet, timeout=timeout, verbose=0)
-    elapsed = ''
+    elapsed = 0
     proto = ''
+    sr(IP(dst=ip) / TCP(sport=src_port, dport=port, flags='AR'), timeout=1, verbose=0)
     if is_verbose:
         elapsed = time.perf_counter() - start_time
     if (resp == None):
         pass
     elif resp.haslayer(TCP):
         if (resp.getlayer(TCP).flags == 0x12):  # We got a SYN-ACK
-            sr(IP(dst=ip) / TCP(sport=src_port, dport=port, flags='AR'), timeout=1, verbose=0)
+
             if is_guess:
                 proto = resp.sprintf("%TCP.sport%")
                 if proto == "domain":
@@ -66,7 +70,11 @@ def scan_tcp(args):
                     proto = "ECHO"
                 else:
                     proto = proto.upper()
-            print("TCP {} {} {}".format(port, str(round(elapsed * 1000, 3)), proto))
+            if is_verbose:
+                elapsed = str(round(elapsed * 1000, 3))
+            else:
+                elapsed = ''
+            print("TCP {} {} {}".format(port, elapsed, proto))
 
 
 def scan_ports(ip, ports, is_verbose, is_guess, timeout):
@@ -74,12 +82,30 @@ def scan_ports(ip, ports, is_verbose, is_guess, timeout):
     udp_ports = []
     pool_udp = Pool(256)
     tcp_ports = []
-    for port in ports['udp']:
-        udp_ports.append((ip, port, is_guess, timeout))
-    pool_udp.map(scan_udp, udp_ports)
+    handle_udp(ip, is_guess, pool_udp, ports, timeout, udp_ports)
+    handle_tcp(ip, is_guess, is_verbose, pool_tcp, ports, tcp_ports, timeout)
+
+
+def handle_tcp(ip, is_guess, is_verbose, pool_tcp, ports, tcp_ports, timeout):
     for port in ports['tcp']:
         tcp_ports.append((port, ip, is_verbose, is_guess, timeout))
-    pool_tcp.map(scan_tcp, tcp_ports)
+    res_tcp = pool_tcp.imap(scan_tcp, tcp_ports)
+    while True:
+        try:
+            res_tcp.next()
+        except (ConnectionResetError, StopIteration) as error:
+            break
+
+
+def handle_udp(ip, is_guess, pool_udp, ports, timeout, udp_ports):
+    for port in ports['udp']:
+        udp_ports.append((ip, port, is_guess, timeout))
+    res_udp = pool_udp.imap(scan_udp, udp_ports)
+    while True:
+        try:
+            res_udp.next()
+        except (ConnectionResetError, StopIteration) as error:
+            break
 
 
 def parse_args(args):
@@ -100,6 +126,8 @@ def parse_args(args):
 def scan_udp(args):
     ip, port, is_guess, timeout = args
     proto = ''
+    if port == '':
+        return
     sock = socket.socket(
         socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
@@ -121,6 +149,7 @@ def scan_udp(args):
     sock.close()
 
 
+
 def check_pack(pack, pack_id, was_send):
     if pack[:4].startswith(b"HTTP"):
         return "HTTP"
@@ -135,8 +164,10 @@ def check_pack(pack, pack_id, was_send):
 def main():
     args = get_input_parameters()
     ports, ip, timeout, is_verbose, is_guess = parse_args(args)
+
     scan_ports(ip, ports, is_verbose, is_guess, timeout)
 
 
 if __name__ == '__main__':
     main()
+
