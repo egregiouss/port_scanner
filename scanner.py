@@ -33,6 +33,12 @@ def get_input_parameters():
         help="таймаут ожидания ответа (по умолчанию 2с)",
     )
     parser.add_argument(
+        "-j", '--num_threads',
+        type=int,
+        default=100,
+        help="число потоков, в слу",
+    )
+    parser.add_argument(
         '-v', '--verbose', action="store_true", help="подробный режим"
     )
     parser.add_argument('-g', '--guess', action="store_true")
@@ -40,7 +46,30 @@ def get_input_parameters():
                         help='ports....')
     return parser.parse_args()
 
-
+def scan_udp(args):
+    ip, port, is_guess, timeout = args
+    proto = ''
+    if port == '':
+        return
+    sock = socket.socket(
+        socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    for i in UDP_PACKS:
+        try:
+            address = (ip, int(port))
+            sock.sendto(UDP_PACKS[i], address)
+            data, _ = sock.recvfrom(1024)
+            if is_guess:
+                proto = check_pack(data, ID, UDP_PACKS[i])
+            if data:
+                if proto is None:
+                    proto = '-'
+                else:
+                    print("UDP {} {}".format(port, proto))
+                    break
+        except socket.timeout as error:
+            pass
+    sock.close()
 def scan_tcp(args):
     port, ip, is_verbose, is_guess, timeout = args
     start_time = time.perf_counter()
@@ -50,13 +79,15 @@ def scan_tcp(args):
     port = int(port)
     src_port = RandShort()  # Randomize source port numbers
     packet = IP(dst=ip) / TCP(sport=src_port, dport=port, flags='S')
-
-    resp = sr1(packet, timeout=timeout, verbose=0)
     elapsed = 0
-    proto = ''
-    sr(IP(dst=ip) / TCP(sport=src_port, dport=port, flags='AR'), timeout=1, verbose=0)
+    resp = sr1(packet, timeout=timeout, verbose=0)
+
     if is_verbose:
         elapsed = time.perf_counter() - start_time
+
+    proto = ''
+    sr(IP(dst=ip) / TCP(sport=src_port, dport=port, flags='AR'), timeout=timeout, verbose=0)
+
     if (resp == None):
         pass
     elif resp.haslayer(TCP):
@@ -71,16 +102,16 @@ def scan_tcp(args):
                 else:
                     proto = proto.upper()
             if is_verbose:
-                elapsed = str(round(elapsed * 1000, 3))
+                elapsed = str(round(elapsed*1000, 3)) + 'ms'
             else:
                 elapsed = ''
             print("TCP {} {} {}".format(port, elapsed, proto))
 
 
-def scan_ports(ip, ports, is_verbose, is_guess, timeout):
-    pool_tcp = Pool(100)
+def scan_ports(ip, ports, is_verbose, is_guess, timeout, num_proc):
+    pool_tcp = Pool(num_proc)
     udp_ports = []
-    pool_udp = Pool(100)
+    pool_udp = Pool(num_proc)
     tcp_ports = []
     handle_udp(ip, is_guess, pool_udp, ports, timeout, udp_ports)
     pool_udp.close()
@@ -117,6 +148,8 @@ def parse_args(args):
     ports = {'udp': set(), 'tcp': set()}
     for port_info in args.ports:
         proto = port_info[:3]
+        if '/' not in port_info:
+            ports[proto].update(range(1, 65535 + 1))
         for i in port_info[4:].split(','):
             if "-" in i:
                 start = int(i.split("-")[0])
@@ -124,31 +157,7 @@ def parse_args(args):
                 ports[proto].update(range(start, end + 1))
             else:
                 ports[proto].update([i])
-    return ports, ip, args.timeout, args.verbose, args.guess
-
-
-def scan_udp(args):
-    ip, port, is_guess, timeout = args
-    proto = ''
-    sock = socket.socket(
-        socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(timeout)
-    for i in UDP_PACKS:
-        try:
-            address = (ip, int(port))
-            sock.sendto(UDP_PACKS[i], address)
-            data, _ = sock.recvfrom(1024)
-            if is_guess:
-                proto = check_pack(data, ID, UDP_PACKS[i])
-            if data:
-                if proto is None:
-                    proto = '-'
-                else:
-                    print("UDP", port, proto)
-                    break
-        except socket.timeout as error:
-            pass
-    sock.close()
+    return ports, ip, args.timeout, args.verbose, args.guess, args.num_threads
 
 
 
@@ -165,10 +174,15 @@ def check_pack(pack, pack_id, was_send):
 
 def main():
     args = get_input_parameters()
-    ports, ip, timeout, is_verbose, is_guess = parse_args(args)
-    scan_ports(ip, ports, is_verbose, is_guess, timeout)
+    ports, ip, timeout, is_verbose, is_guess, num_proc = parse_args(args)
+
+
+
+    scan_ports(ip, ports, is_verbose, is_guess, timeout, num_proc)
 
 
 if __name__ == '__main__':
+
+
     main()
 
